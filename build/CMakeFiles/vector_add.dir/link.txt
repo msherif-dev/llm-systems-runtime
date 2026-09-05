@@ -1,1 +1,0 @@
-/usr/bin/g++ @CMakeFiles/vector_add.dir/objects1.rsp CMakeFiles/vector_add.dir/cmake_device_link.o -o vector_add @CMakeFiles/vector_add.dir/linkLibs.rsp -L"/usr/local/cuda/targets/x86_64-linux/lib/stubs" -L"/usr/local/cuda/targets/x86_64-linux/lib"

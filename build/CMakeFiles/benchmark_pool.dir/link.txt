@@ -1,1 +1,0 @@
-/usr/bin/g++ @CMakeFiles/benchmark_pool.dir/objects1.rsp CMakeFiles/benchmark_pool.dir/cmake_device_link.o -o benchmark_pool @CMakeFiles/benchmark_pool.dir/linkLibs.rsp -L"/usr/local/cuda/targets/x86_64-linux/lib/stubs" -L"/usr/local/cuda/targets/x86_64-linux/lib"
