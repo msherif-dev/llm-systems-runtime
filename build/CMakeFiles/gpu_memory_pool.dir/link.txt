@@ -1,2 +1,0 @@
-/usr/bin/ar qc libgpu_memory_pool.a "CMakeFiles/gpu_memory_pool.dir/memory-pool/src/gpu_memory_pool.cu.o"
-/usr/bin/ranlib libgpu_memory_pool.a
