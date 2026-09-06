@@ -71,3 +71,25 @@ set_target_properties(
     PROPERTIES
     CUDA_SEPARABLE_COMPILATION ON
 )
+# ============================================================
+# v0.4 - Naive Matrix Multiplication
+# ============================================================
+
+add_library(matmul_naive
+    kernels/matmul/src/matmul_naive.cu
+)
+
+target_include_directories(matmul_naive
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/kernels/matmul/include
+)
+
+
+add_executable(test_matmul_naive
+    kernels/matmul/tests/test_matmul_naive.cu
+)
+
+target_link_libraries(test_matmul_naive
+    PRIVATE
+        matmul_naive
+)

@@ -1,0 +1,2 @@
+/usr/bin/ar qc libmatmul_naive.a CMakeFiles/matmul_naive.dir/kernels/matmul/src/matmul_naive.cu.o
+/usr/bin/ranlib libmatmul_naive.a
