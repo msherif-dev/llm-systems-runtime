@@ -2,15 +2,20 @@
 
 #include <cuda_runtime.h>
 
-// Naive matrix multiplication:
-//
-// A: M x K
-// B: K x N
-// C: M x N
-//
-// Each CUDA thread computes exactly one element C[row][col].
+constexpr int TILE_SIZE = 16;
+
 __global__
 void matmul_naive(
+    const float* A,
+    const float* B,
+    float* C,
+    int M,
+    int N,
+    int K
+);
+
+__global__
+void matmul_tiled(
     const float* A,
     const float* B,
     float* C,

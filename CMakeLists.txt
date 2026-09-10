@@ -20,8 +20,8 @@ add_library(
 target_include_directories(
     gpu_memory_pool
     PUBLIC
-    ${PROJECT_SOURCE_DIR}/memory-pool/include
-    ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/memory-pool/include
+        ${PROJECT_SOURCE_DIR}/include
 )
 
 set_target_properties(
@@ -42,7 +42,7 @@ add_executable(
 target_link_libraries(
     test_pool
     PRIVATE
-    gpu_memory_pool
+        gpu_memory_pool
 )
 
 set_target_properties(
@@ -63,7 +63,7 @@ add_executable(
 target_link_libraries(
     benchmark_pool
     PRIVATE
-    gpu_memory_pool
+        gpu_memory_pool
 )
 
 set_target_properties(
@@ -71,25 +71,67 @@ set_target_properties(
     PROPERTIES
     CUDA_SEPARABLE_COMPILATION ON
 )
+
 # ============================================================
-# v0.4 - Naive Matrix Multiplication
+# v0.4 - Matrix Multiplication
 # ============================================================
 
-add_library(matmul_naive
+add_library(
+    matmul
     kernels/matmul/src/matmul_naive.cu
+    kernels/matmul/src/matmul_tiled.cu
 )
 
-target_include_directories(matmul_naive
+target_include_directories(
+    matmul
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/kernels/matmul/include
 )
 
-
-add_executable(test_matmul_naive
-    kernels/matmul/tests/test_matmul_naive.cu
+set_target_properties(
+    matmul
+    PROPERTIES
+    CUDA_SEPARABLE_COMPILATION ON
 )
 
-target_link_libraries(test_matmul_naive
+# ============================================================
+# v0.4 - MatMul Correctness Test
+# ============================================================
+
+add_executable(
+    test_matmul
+    kernels/matmul/tests/test_matmul.cu
+)
+
+target_link_libraries(
+    test_matmul
     PRIVATE
-        matmul_naive
+        matmul
+)
+
+set_target_properties(
+    test_matmul
+    PROPERTIES
+    CUDA_SEPARABLE_COMPILATION ON
+)
+
+# ============================================================
+# v0.4 - MatMul Benchmark
+# ============================================================
+
+add_executable(
+    benchmark_matmul
+    benchmarks/benchmark_matmul.cu
+)
+
+target_link_libraries(
+    benchmark_matmul
+    PRIVATE
+        matmul
+)
+
+set_target_properties(
+    benchmark_matmul
+    PROPERTIES
+    CUDA_SEPARABLE_COMPILATION ON
 )

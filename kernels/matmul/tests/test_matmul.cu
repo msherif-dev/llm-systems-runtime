@@ -8,10 +8,6 @@
 #include "matmul.cuh"
 
 
-// ============================================================
-// CUDA error checking
-// ============================================================
-
 #define CUDA_CHECK(call)                                             \
 do                                                                    \
 {                                                                     \
@@ -27,15 +23,10 @@ do                                                                    \
             << ":"                                                      \
             << __LINE__                                                \
             << std::endl;                                             \
-                                                                      \
         std::exit(EXIT_FAILURE);                                      \
     }                                                                 \
 } while (0)
 
-
-// ============================================================
-// CPU reference implementation
-// ============================================================
 
 void matmul_cpu(
     const std::vector<float>& A,
@@ -65,11 +56,7 @@ void matmul_cpu(
 }
 
 
-// ============================================================
-// Compare matrices
-// ============================================================
-
-bool compare_matrices(
+bool compare(
     const std::vector<float>& expected,
     const std::vector<float>& actual,
     float tolerance = 1e-4f
@@ -80,20 +67,23 @@ bool compare_matrices(
 
     for (size_t i = 0; i < expected.size(); ++i)
     {
-        float difference =
-            std::fabs(expected[i] - actual[i]);
+        float diff =
+            std::fabs(
+                expected[i] -
+                actual[i]
+            );
 
-        if (difference > tolerance)
+        if (diff > tolerance)
         {
             std::cerr
-                << "Mismatch at index "
+                << "Mismatch at "
                 << i
                 << ": expected="
                 << expected[i]
                 << ", actual="
                 << actual[i]
-                << ", difference="
-                << difference
+                << ", diff="
+                << diff
                 << std::endl;
 
             return false;
@@ -103,34 +93,6 @@ bool compare_matrices(
     return true;
 }
 
-
-// ============================================================
-// Print matrix
-// ============================================================
-
-void print_matrix(
-    const std::vector<float>& matrix,
-    int rows,
-    int cols
-)
-{
-    for (int row = 0; row < rows; ++row)
-    {
-        for (int col = 0; col < cols; ++col)
-        {
-            std::cout
-                << matrix[row * cols + col]
-                << " ";
-        }
-
-        std::cout << '\n';
-    }
-}
-
-
-// ============================================================
-// Test
-// ============================================================
 
 void run_test(
     int M,
@@ -146,41 +108,63 @@ void run_test(
         << std::endl;
 
 
-    // --------------------------------------------------------
-    // Host matrices
-    // --------------------------------------------------------
-
-    size_t size_A =
+    size_t count_A =
         static_cast<size_t>(M) * K;
 
-    size_t size_B =
+    size_t count_B =
         static_cast<size_t>(K) * N;
 
-    size_t size_C =
+    size_t count_C =
         static_cast<size_t>(M) * N;
 
 
-    std::vector<float> h_A(size_A);
-    std::vector<float> h_B(size_B);
-    std::vector<float> h_C(size_C, 0.0f);
+    size_t bytes_A =
+        count_A * sizeof(float);
 
-    std::vector<float> h_reference(size_C, 0.0f);
+    size_t bytes_B =
+        count_B * sizeof(float);
+
+    size_t bytes_C =
+        count_C * sizeof(float);
+
+
+    std::vector<float> h_A(count_A);
+    std::vector<float> h_B(count_B);
+
+    std::vector<float> h_reference(
+        count_C,
+        0.0f
+    );
+
+    std::vector<float> h_naive(
+        count_C,
+        0.0f
+    );
+
+    std::vector<float> h_tiled(
+        count_C,
+        0.0f
+    );
 
 
     // --------------------------------------------------------
-    // Initialize data
+    // Initialize deterministic data
     // --------------------------------------------------------
 
-    for (size_t i = 0; i < size_A; ++i)
+    for (size_t i = 0; i < count_A; ++i)
     {
         h_A[i] =
-            static_cast<float>((i % 7) + 1);
+            static_cast<float>(
+                (i % 7) + 1
+            );
     }
 
-    for (size_t i = 0; i < size_B; ++i)
+    for (size_t i = 0; i < count_B; ++i)
     {
         h_B[i] =
-            static_cast<float>((i % 5) + 1);
+            static_cast<float>(
+                (i % 5) + 1
+            );
     }
 
 
@@ -204,39 +188,48 @@ void run_test(
 
     float* d_A = nullptr;
     float* d_B = nullptr;
-    float* d_C = nullptr;
+    float* d_C_naive = nullptr;
+    float* d_C_tiled = nullptr;
+
 
     CUDA_CHECK(
         cudaMalloc(
             &d_A,
-            size_A * sizeof(float)
+            bytes_A
         )
     );
 
     CUDA_CHECK(
         cudaMalloc(
             &d_B,
-            size_B * sizeof(float)
+            bytes_B
         )
     );
 
     CUDA_CHECK(
         cudaMalloc(
-            &d_C,
-            size_C * sizeof(float)
+            &d_C_naive,
+            bytes_C
+        )
+    );
+
+    CUDA_CHECK(
+        cudaMalloc(
+            &d_C_tiled,
+            bytes_C
         )
     );
 
 
     // --------------------------------------------------------
-    // Copy Host -> Device
+    // Copy input
     // --------------------------------------------------------
 
     CUDA_CHECK(
         cudaMemcpy(
             d_A,
             h_A.data(),
-            size_A * sizeof(float),
+            bytes_A,
             cudaMemcpyHostToDevice
         )
     );
@@ -245,128 +238,118 @@ void run_test(
         cudaMemcpy(
             d_B,
             h_B.data(),
-            size_B * sizeof(float),
+            bytes_B,
             cudaMemcpyHostToDevice
         )
     );
 
 
     // --------------------------------------------------------
-    // Configure CUDA execution
+    // Configuration
     // --------------------------------------------------------
 
-    dim3 block(16, 16);
+    dim3 block(
+        TILE_SIZE,
+        TILE_SIZE
+    );
 
     dim3 grid(
-        (N + block.x - 1) / block.x,
-        (M + block.y - 1) / block.y
+        (N + TILE_SIZE - 1) / TILE_SIZE,
+        (M + TILE_SIZE - 1) / TILE_SIZE
     );
 
 
-    std::cout
-        << "Block: "
-        << block.x
-        << "x"
-        << block.y
-        << std::endl;
-
-    std::cout
-        << "Grid: "
-        << grid.x
-        << "x"
-        << grid.y
-        << std::endl;
-
-
     // --------------------------------------------------------
-    // Launch kernel
+    // Naive
     // --------------------------------------------------------
 
     matmul_naive<<<grid, block>>>(
         d_A,
         d_B,
-        d_C,
+        d_C_naive,
         M,
         N,
         K
     );
 
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaDeviceSynchronize());
+
 
     // --------------------------------------------------------
-    // Check kernel launch
+    // Tiled
     // --------------------------------------------------------
 
-    CUDA_CHECK(
-        cudaGetLastError()
+    matmul_tiled<<<grid, block>>>(
+        d_A,
+        d_B,
+        d_C_tiled,
+        M,
+        N,
+        K
     );
 
-
-    // --------------------------------------------------------
-    // Wait for kernel to finish
-    // --------------------------------------------------------
-
-    CUDA_CHECK(
-        cudaDeviceSynchronize()
-    );
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaDeviceSynchronize());
 
 
     // --------------------------------------------------------
-    // Copy Device -> Host
+    // Copy results
     // --------------------------------------------------------
 
     CUDA_CHECK(
         cudaMemcpy(
-            h_C.data(),
-            d_C,
-            size_C * sizeof(float),
+            h_naive.data(),
+            d_C_naive,
+            bytes_C,
+            cudaMemcpyDeviceToHost
+        )
+    );
+
+    CUDA_CHECK(
+        cudaMemcpy(
+            h_tiled.data(),
+            d_C_tiled,
+            bytes_C,
             cudaMemcpyDeviceToHost
         )
     );
 
 
     // --------------------------------------------------------
-    // Validate
+    // Validate Naive
     // --------------------------------------------------------
 
-    bool passed =
-        compare_matrices(
-            h_reference,
-            h_C
-        );
-
-
-    if (passed)
+    if (!compare(h_reference, h_naive))
     {
-        std::cout
-            << "PASS"
+        std::cerr
+            << "Naive kernel FAILED"
             << std::endl;
-    }
-    else
-    {
-        std::cout
-            << "FAIL"
-            << std::endl;
-
-        std::cout
-            << "\nExpected:\n";
-
-        print_matrix(
-            h_reference,
-            M,
-            N
-        );
-
-        std::cout
-            << "\nActual:\n";
-
-        print_matrix(
-            h_C,
-            M,
-            N
-        );
 
         std::exit(EXIT_FAILURE);
     }
+
+    std::cout
+        << "Naive: PASS"
+        << std::endl;
+
+
+    // --------------------------------------------------------
+    // Validate Tiled
+    // --------------------------------------------------------
+
+    if (!compare(h_reference, h_tiled))
+    {
+        std::cerr
+            << "Tiled kernel FAILED"
+            << std::endl;
+
+        std::exit(EXIT_FAILURE);
+    }
+
+    std::cout
+        << "Tiled: PASS"
+        << std::endl;
 
 
     // --------------------------------------------------------
@@ -375,49 +358,48 @@ void run_test(
 
     CUDA_CHECK(cudaFree(d_A));
     CUDA_CHECK(cudaFree(d_B));
-    CUDA_CHECK(cudaFree(d_C));
+    CUDA_CHECK(cudaFree(d_C_naive));
+    CUDA_CHECK(cudaFree(d_C_tiled));
 }
 
-
-// ============================================================
-// Main
-// ============================================================
 
 int main()
 {
     std::cout
         << "========================================\n"
-        << " Naive CUDA Matrix Multiplication Test\n"
+        << " CUDA MatMul Correctness Test\n"
         << "========================================\n";
 
 
-    // Small square matrix
+    // Square
     run_test(
-        4,
-        4,
-        4
+        256,
+        256,
+        256
     );
 
 
-    // Non-square matrix
-    //
-    // A = 4 x 3
-    // B = 3 x 2
-    // C = 4 x 2
-
+    // Non-square
     run_test(
-        4,
-        2,
-        3
+        512,
+        256,
+        1024
     );
 
 
-    // Another non-square case
-
+    // Non-square
     run_test(
-        7,
-        5,
-        11
+        513,
+        257,
+        777
+    );
+
+
+    // Small edge case
+    run_test(
+        17,
+        19,
+        23
     );
 
 
@@ -425,6 +407,7 @@ int main()
         << "\n========================================\n"
         << " All tests passed!\n"
         << "========================================\n";
+
 
     return EXIT_SUCCESS;
 }
