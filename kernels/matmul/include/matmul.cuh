@@ -2,7 +2,7 @@
 
 #include <cuda_runtime.h>
 
-constexpr int TILE_SIZE = 16;
+constexpr int TILE_SIZE = 32;
 
 __global__
 void matmul_naive(

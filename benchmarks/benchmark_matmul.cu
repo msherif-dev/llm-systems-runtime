@@ -1,190 +1,163 @@
+#include "matmul.cuh"
+
 #include <cuda_runtime.h>
 
 #include <cstdlib>
 #include <iomanip>
 #include <iostream>
 
-#include "matmul.cuh"
 
-
-// Cuda Error Check
 #define CUDA_CHECK(call)                                             \
-do                                                                    \
-{                                                                     \
-    cudaError_t error = (call);                                       \
-                                                                      \
-    if (error != cudaSuccess)                                         \
-    {                                                                 \
-        std::cerr                                                     \
-            << "CUDA error: "                                         \
-            << cudaGetErrorString(error)                              \
-            << " at "                                                  \
-            << __FILE__                                                \
-            << ":"                                                      \
-            << __LINE__                                                \
-            << std::endl;                                             \
-                                                                      \
-        std::exit(EXIT_FAILURE);                                      \
-    }                                                                 \
+do {                                                                 \
+    cudaError_t err = call;                                          \
+    if (err != cudaSuccess) {                                        \
+        std::cerr << "CUDA Error: "                                     \
+                  << cudaGetErrorString(err)                         \
+                  << " at " << __FILE__ << ":" << __LINE__           \
+                  << std::endl;                                      \
+        std::exit(EXIT_FAILURE);                                     \
+    }                                                                \
 } while (0)
 
-// Benchmark for one matrix 
 
-void benchmark(
+
+struct Result
+{
+    float ms;
+    double gflops;
+};
+
+
+
+void launch_naive(
+    const float* A,
+    const float* B,
+    float* C,
     int M,
     int N,
-    int K,
-    int warmup_iterations,
-    int benchmark_iterations
+    int K
 )
 {
-    std::cout
-        << "\n========================================\n";
-
-    std::cout
-        << "Matrix: "
-        << M << " x " << K
-        << " * "
-        << K << " x " << N
-        << std::endl;
-
-
-    // --------------------------------------------------------
-    // Allocate device memory
-    // --------------------------------------------------------
-
-    size_t size_A =
-        static_cast<size_t>(M) *
-        K *
-        sizeof(float);
-
-    size_t size_B =
-        static_cast<size_t>(K) *
-        N *
-        sizeof(float);
-
-    size_t size_C =
-        static_cast<size_t>(M) *
-        N *
-        sizeof(float);
-
-
-    float* d_A = nullptr;
-    float* d_B = nullptr;
-    float* d_C = nullptr;
-
-
-    CUDA_CHECK(
-        cudaMalloc(
-            &d_A,
-            size_A
-        )
+    dim3 block(
+        TILE_SIZE,
+        TILE_SIZE
     );
 
-    CUDA_CHECK(
-        cudaMalloc(
-            &d_B,
-            size_B
-        )
-    );
-
-    CUDA_CHECK(
-        cudaMalloc(
-            &d_C,
-            size_C
-        )
-    );
-
-    // Initialize GPU memory
-
-    CUDA_CHECK(
-        cudaMemset(
-            d_A,
-            1,
-            size_A
-        )
-    );
-
-    CUDA_CHECK(
-        cudaMemset(
-            d_B,
-            1,
-            size_B
-        )
-    );
-
-    CUDA_CHECK(
-        cudaMemset(
-            d_C,
-            0,
-            size_C
-        )
-    );
-
-    // CONFIGE THE KERNAL 
-
-    dim3 block(16, 16);
 
     dim3 grid(
-        (N + block.x - 1) / block.x,
-        (M + block.y - 1) / block.y
+        (N + TILE_SIZE - 1) / TILE_SIZE,
+        (M + TILE_SIZE - 1) / TILE_SIZE
     );
 
 
-    std::cout
-        << "Grid: "
-        << grid.x
-        << " x "
-        << grid.y
-        << std::endl;
+    matmul_naive<<<grid, block>>>(
+        A,
+        B,
+        C,
+        M,
+        N,
+        K
+    );
+}
 
-    std::cout
-        << "Block: "
-        << block.x
-        << " x "
-        << block.y
-        << std::endl;
 
+
+void launch_tiled(
+    const float* A,
+    const float* B,
+    float* C,
+    int M,
+    int N,
+    int K
+)
+{
+    dim3 block(
+        TILE_SIZE,
+        TILE_SIZE
+    );
+
+
+    dim3 grid(
+        (N + TILE_SIZE - 1) / TILE_SIZE,
+        (M + TILE_SIZE - 1) / TILE_SIZE
+    );
+
+
+    matmul_tiled<<<grid, block>>>(
+        A,
+        B,
+        C,
+        M,
+        N,
+        K
+    );
+}
+
+
+
+Result benchmark(
+    void (*launch)(
+        const float*,
+        const float*,
+        float*,
+        int,
+        int,
+        int
+    ),
+    const float* A,
+    const float* B,
+    float* C,
+    int M,
+    int N,
+    int K
+)
+{
+    constexpr int WARMUP = 10;
+    constexpr int ITERATIONS = 100;
+
+
+    // --------------------------------------------------------
     // Warmup
+    // --------------------------------------------------------
 
-    for (int i = 0; i < warmup_iterations; ++i)
+    for (int i = 0; i < WARMUP; ++i)
     {
-        matmul_naive<<<grid, block>>>(
-            d_A,
-            d_B,
-            d_C,
+        launch(
+            A,
+            B,
+            C,
             M,
             N,
             K
         );
     }
+
 
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
 
-   // CUDA events
 
-   cudaEvent_t start;
+    // --------------------------------------------------------
+    // Events
+    // --------------------------------------------------------
+
+    cudaEvent_t start;
     cudaEvent_t stop;
 
-    CUDA_CHECK(
-        cudaEventCreate(&start)
-    );
 
-    CUDA_CHECK(
-        cudaEventCreate(&stop)
-    );
+    CUDA_CHECK(cudaEventCreate(&start));
+    CUDA_CHECK(cudaEventCreate(&stop));
 
-    CUDA_CHECK(
-        cudaEventRecord(start)
-    );
 
-    for (int i = 0; i < benchmark_iterations; ++i)
+    CUDA_CHECK(cudaEventRecord(start));
+
+
+    for (int i = 0; i < ITERATIONS; ++i)
     {
-        matmul_naive<<<grid, block>>>(
-            d_A,
-            d_B,
-            d_C,
+        launch(
+            A,
+            B,
+            C,
             M,
             N,
             K
@@ -192,17 +165,12 @@ void benchmark(
     }
 
 
-    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaEventRecord(stop));
+    CUDA_CHECK(cudaEventSynchronize(stop));
 
-    CUDA_CHECK(
-        cudaEventRecord(stop)
-    );
-
-    CUDA_CHECK(
-        cudaEventSynchronize(stop)
-    );
 
     float total_ms = 0.0f;
+
 
     CUDA_CHECK(
         cudaEventElapsedTime(
@@ -213,12 +181,17 @@ void benchmark(
     );
 
 
-    float average_ms =
-        total_ms /
-        benchmark_iterations;
+    CUDA_CHECK(cudaEventDestroy(start));
+    CUDA_CHECK(cudaEventDestroy(stop));
 
-    
-    // Calculate FLOPs
+
+    float avg_ms =
+        total_ms / ITERATIONS;
+
+
+    // --------------------------------------------------------
+    // GFLOPS
+    // --------------------------------------------------------
 
     double operations =
         2.0 *
@@ -228,7 +201,7 @@ void benchmark(
 
 
     double seconds =
-        average_ms / 1000.0;
+        avg_ms / 1000.0;
 
 
     double gflops =
@@ -236,104 +209,227 @@ void benchmark(
         seconds /
         1e9;
 
-    // Print Result 
 
-    std::cout
-        << std::fixed
-        << std::setprecision(3);
+    return {
+        avg_ms,
+        gflops
+    };
+}
 
-    std::cout
-        << "Average kernel time: "
-        << average_ms
-        << " ms"
-        << std::endl;
 
-    std::cout
-        << "Performance: "
-        << gflops
-        << " GFLOPS"
-        << std::endl;
 
-    // Cleanup
+void run(int size)
+{
+    int M = size;
+    int N = size;
+    int K = size;
+
+
+    size_t bytes_A =
+        static_cast<size_t>(M) *
+        K *
+        sizeof(float);
+
+
+    size_t bytes_B =
+        static_cast<size_t>(K) *
+        N *
+        sizeof(float);
+
+
+    size_t bytes_C =
+        static_cast<size_t>(M) *
+        N *
+        sizeof(float);
+
+
+    float* d_A = nullptr;
+    float* d_B = nullptr;
+    float* d_C = nullptr;
+
+
+    CUDA_CHECK(cudaMalloc(
+        &d_A,
+        bytes_A
+    ));
+
+
+    CUDA_CHECK(cudaMalloc(
+        &d_B,
+        bytes_B
+    ));
+
+
+    CUDA_CHECK(cudaMalloc(
+        &d_C,
+        bytes_C
+    ));
+
+
+    CUDA_CHECK(cudaMemset(
+        d_A,
+        0,
+        bytes_A
+    ));
+
+
+    CUDA_CHECK(cudaMemset(
+        d_B,
+        0,
+        bytes_B
+    ));
+
+
+    CUDA_CHECK(cudaMemset(
+        d_C,
+        0,
+        bytes_C
+    ));
+
+
+    Result naive =
+        benchmark(
+            launch_naive,
+            d_A,
+            d_B,
+            d_C,
+            M,
+            N,
+            K
+        );
+
+
+    Result tiled =
+        benchmark(
+            launch_tiled,
+            d_A,
+            d_B,
+            d_C,
+            M,
+            N,
+            K
+        );
+
+
+    // --------------------------------------------------------
+    // Comparison
     // --------------------------------------------------------
 
-    CUDA_CHECK(
-        cudaEventDestroy(start)
-    );
+    double speedup =
+        naive.ms /
+        tiled.ms;
 
-    CUDA_CHECK(
-        cudaEventDestroy(stop)
-    );
 
-    CUDA_CHECK(
-        cudaFree(d_A)
-    );
+    double improvement =
+        (
+            naive.ms -
+            tiled.ms
+        )
+        /
+        naive.ms
+        * 100.0;
 
-    CUDA_CHECK(
-        cudaFree(d_B)
-    );
 
-    CUDA_CHECK(
-        cudaFree(d_C)
-    );
+    std::cout << "\n";
+    std::cout
+        << "============================================\n";
+
+    std::cout
+        << "Matrix: "
+        << size
+        << " x "
+        << size
+        << "\n";
+
+    std::cout
+        << "============================================\n";
+
+
+    std::cout
+        << std::left
+        << std::setw(15)
+        << "Kernel"
+        << std::right
+        << std::setw(15)
+        << "Time (ms)"
+        << std::setw(15)
+        << "GFLOPS"
+        << "\n";
+
+
+    std::cout
+        << "--------------------------------------------\n";
+
+
+    std::cout
+        << std::left
+        << std::setw(15)
+        << "Naive"
+        << std::right
+        << std::setw(15)
+        << std::fixed
+        << std::setprecision(4)
+        << naive.ms
+        << std::setw(15)
+        << std::setprecision(2)
+        << naive.gflops
+        << "\n";
+
+
+    std::cout
+        << std::left
+        << std::setw(15)
+        << "Tiled"
+        << std::right
+        << std::setw(15)
+        << std::fixed
+        << std::setprecision(4)
+        << tiled.ms
+        << std::setw(15)
+        << std::setprecision(2)
+        << tiled.gflops
+        << "\n";
+
+
+    std::cout
+        << "\nTiled Speedup: "
+        << std::fixed
+        << std::setprecision(2)
+        << speedup
+        << "x\n";
+
+
+    std::cout
+        << "Tiled Improvement: "
+        << std::fixed
+        << std::setprecision(2)
+        << improvement
+        << "%\n";
+
+
+    CUDA_CHECK(cudaFree(d_A));
+    CUDA_CHECK(cudaFree(d_B));
+    CUDA_CHECK(cudaFree(d_C));
 }
+
+
 
 int main()
 {
-    std::cout
-        << "========================================\n"
-        << " Naive CUDA MatMul Benchmark\n"
-        << "========================================\n";
-
-
-    constexpr int WARMUP = 10;
-    constexpr int ITERATIONS = 100;
-
-
-    // --------------------------------------------------------
-    // 256 x 256
-    // --------------------------------------------------------
-
-    benchmark(
-        256,
-        256,
-        256,
-        WARMUP,
-        ITERATIONS
-    );
-
-
-    // --------------------------------------------------------
-    // 512 x 512
-    // --------------------------------------------------------
-
-    benchmark(
-        512,
-        512,
-        512,
-        WARMUP,
-        ITERATIONS
-    );
-
-
-    // --------------------------------------------------------
-    // 1024 x 1024
-    // --------------------------------------------------------
-
-    benchmark(
-        1024,
-        1024,
-        1024,
-        WARMUP,
-        ITERATIONS
-    );
+    CUDA_CHECK(cudaSetDevice(0));
 
 
     std::cout
-        << "\n========================================\n"
-        << " Benchmark complete\n"
-        << "========================================\n";
+        << "============================================\n"
+        << "CUDA MatMul Benchmark\n"
+        << "Naive vs Tiled\n"
+        << "============================================\n";
 
 
-    return EXIT_SUCCESS;
+    run(256);
+    run(512);
+    run(1024);
+
+
+    return 0;
 }
